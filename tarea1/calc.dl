@@ -1,0 +1,9 @@
+@socket_server:
+@Path: ./servidores
+@Class: Calculadora
+
+@Constructor: constructor() {}
+
+@Method:sumar(a:int, b:int):int {}
+
+@Method:restar(a:int, b:int):int {}
