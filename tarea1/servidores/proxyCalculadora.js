@@ -1,3 +1,4 @@
+
 import ClientConnect from "./clientConnect.js";
 
 export default class ProxyCalculadora {
@@ -13,3 +14,5 @@ export default class ProxyCalculadora {
     return this.client.send("restar", [a, b]);
   }
 }
+
+

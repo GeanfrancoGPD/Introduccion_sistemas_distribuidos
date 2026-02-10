@@ -39,10 +39,10 @@ export default class server {
       ws.on("message", (message) => {
         const req = JSON.parse(message);
         const { method, params } = req;
-        console.log("Recibido método: ${method} con params: ${params}");
+        console.log("Recibido método:", method, "con params:", params);
         if (typeof instance[method] === "function") {
           const result = instance[method](...params);
-          console.log("Enviado resultado: ${result}");
+          console.log("Enviado resultado:", result);
           ws.send(JSON.stringify({ result }));
         } else {
           ws.send(JSON.stringify({ error: "Método no existe" }));
