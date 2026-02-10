@@ -1,24 +1,33 @@
-
-import net from "net";
+import { WebSocketServer } from "ws";
 import Calculadora from "./Calculadora.js";
 
 const instance = new Calculadora();
 
-const server = net.createServer(socket => {
-socket.on("data", data => {
-    const req = JSON.parse(data.toString());
-    const { method, params } = req;
+export default class server {
+  constructor() {
+    this.socket = new WebSocketServer({ port: 5000 });
+  }
 
-    if (typeof instance[method] === "function") {
-        const result = instance[method](...params);
-        socket.write(JSON.stringify({ result }));
-    } else {
-        socket.write(JSON.stringify({ error: "Método no existe" }));
-    }
+  start() {
+    this.socket.on("connection", (ws) => {
+      console.log("Cliente conectado");
+      ws.on("message", (message) => {
+        const req = JSON.parse(message);
+        const { method, params } = req;
+        console.log(`Recibido método: ${method} con params: ${params}`);
+        if (typeof instance[method] === "function") {
+          const result = instance[method](...params);
+          console.log(`Enviado resultado: ${result}`);
+          ws.send(JSON.stringify({ result }));
+        } else {
+          ws.send(JSON.stringify({ error: "Método no existe" }));
+        }
+      });
     });
-});
 
-server.listen(5000, () => {
     console.log("Servidor escuchando en 5000");
-});
-    
+  }
+}
+
+const serverInstance = new server();
+serverInstance.start();

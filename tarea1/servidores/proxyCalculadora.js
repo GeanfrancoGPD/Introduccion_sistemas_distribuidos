@@ -1,19 +1,15 @@
-import sendRequest from "./clientConnect.js";
+import ClientConnect from "./clientConnect.js";
 
 export default class ProxyCalculadora {
+  constructor() {
+    this.client = new ClientConnect();
+  }
+
   async sumar(a, b) {
-    const res = await sendRequest({
-      method: "sumar",
-      params: [a, b],
-    });
-    return res.result;
+    return this.client.send("sumar", [a, b]);
   }
 
   async restar(a, b) {
-    const res = await sendRequest({
-      method: "restar",
-      params: [a, b],
-    });
-    return res.result;
+    return this.client.send("restar", [a, b]);
   }
 }

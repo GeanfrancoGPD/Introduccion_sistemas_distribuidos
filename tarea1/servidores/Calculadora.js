@@ -1,8 +1,8 @@
 export default class Calculadora {
   sumar(a, b) {
-    // TODO: Implementar lógica para sumar
+    return a + b;
   }
   restar(a, b) {
-    // TODO: Implementar lógica para restar
+    return a - b;
   }
 }

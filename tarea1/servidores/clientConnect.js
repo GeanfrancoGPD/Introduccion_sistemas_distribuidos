@@ -1,18 +1,28 @@
+import WebSocket from "ws";
 
-import net from "net";
+export default class ClientConnect {
+  constructor() {
+    this.socket = new WebSocket("ws://localhost:5000");
+  }
 
-export default function sendRequest(payload) {
-return new Promise((resolve, reject) => {
-    const client = net.createConnection(
-        { port: 5000 },
-        () => client.write(JSON.stringify(payload))
-    );
+  send(method, params) {
+    return new Promise((resolve, reject) => {
+      try {
+        if (this.socket.readyState === WebSocket.OPEN) {
+          this.socket.send(JSON.stringify({ method, params }));
+        } else {
+          this.socket.once("open", () => {
+            this.socket.send(JSON.stringify({ method, params }));
+          });
+        }
 
-    client.on("data", data => {
-        resolve(JSON.parse(data.toString()));
-        client.end();
+        return this.socket.once("message", (message) => {
+          const res = JSON.parse(message);
+          resolve(res.result);
+        });
+      } catch (err) {
+        reject(err);
+      }
     });
-
-    client.on("error", reject);
-    });
-};
+  }
+}

@@ -10,45 +10,54 @@ export default function generateClient(content) {
 
   // clientConnect
   const connectCode = `
-import net from "net";
+import WebSocket from "ws";
 
-export default function sendRequest(payload) {
-return new Promise((resolve, reject) => {
-    const client = net.createConnection(
-        { port: 5000 },
-        () => client.write(JSON.stringify(payload))
-    );
+export default class ClientConnect {
+  constructor() {
+    this.socket = new WebSocket("ws://localhost:5000");
+  }
 
-    client.on("data", data => {
-        resolve(JSON.parse(data.toString()));
-        client.end();
+  send(method, params) {
+    return new Promise((resolve, reject) => {
+      try {
+        if (this.socket.readyState === WebSocket.OPEN) {
+          this.socket.send(JSON.stringify({ method, params }));
+        } else {
+          this.socket.once("open", () => {
+            this.socket.send(JSON.stringify({ method, params }));
+          });
+        }
+
+        return this.socket.once("message", (message) => {
+          const res = JSON.parse(message);
+          resolve(res.result);
+        });
+      } catch (err) {
+        reject(err);
+      }
     });
-
-    client.on("error", reject);
-    });
-};
+  }
+}
 `;
 
   fs.writeFileSync(path.join(dir, "clientConnect.js"), connectCode);
 
   // Proxy
   let proxyCode = `
-import sendRequest from "./clientConnect.js";\n\n
+import ClientConnect from "./clientConnect.js";
 
-export default class Proxy${content.className} {\n`;
-
-  for (const m of content.methods) {
-    proxyCode += `
-async ${m.name}(${m.params.join(", ")}) {
-    const res = await sendRequest({
-    method: "${m.name}",
-    params: [${m.params.join(", ")}]
-    });
-    return res.result;
-}\n`;
+export default class ProxyCalculadora {
+  constructor() {
+    this.client = new ClientConnect();
   }
 
-  proxyCode += `
+  async sumar(a, b) {
+    return this.client.send("sumar", [a, b]);
+  }
+
+  async restar(a, b) {
+    return this.client.send("restar", [a, b]);
+  }
 }
 
 
