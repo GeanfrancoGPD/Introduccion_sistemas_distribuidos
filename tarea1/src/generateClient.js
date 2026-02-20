@@ -1,5 +1,8 @@
 import fs from "fs";
 import path from "path";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 export default function generateClient(content) {
   const dir = content.path || "./clientes";
@@ -14,7 +17,7 @@ import WebSocket from "ws";
 
 export default class ClientConnect {
   constructor() {
-    this.socket = new WebSocket("ws://localhost:5000");
+    this.socket = new WebSocket("ws://localhost:${process.env.PORT}");
   }
 
   serialize(method, params) {
@@ -60,17 +63,18 @@ export default class ProxyCalculadora {
     this.client = new ClientConnect();
   }
 
-  async sumar(a, b) {
-    return this.client.send("sumar", [a, b]);
-  }
-
-  async restar(a, b) {
-    return this.client.send("restar", [a, b]);
-  }
-}
-
-
 `;
+
+  for (let i = 0; i < content.methods.length; i++) {
+    proxyCode += `
+    async ${content.methods[i].name}(${content.methods[i].params.join(", ")}) {
+      return this.client.send("${content.methods[i].name}", [${content.methods[
+      i
+    ].params.join(", ")}]);
+    }
+  `;
+  }
+  proxyCode += `}`;
 
   fs.writeFileSync(path.join(dir, `proxy${content.className}.js`), proxyCode);
 }

@@ -30,7 +30,7 @@ const instance = new ${content.className}();
 
 export default class server {
   constructor() {
-    this.socket = new WebSocketServer({ port: 5000 });
+    this.socket = new WebSocketServer({ port: ${process.env.PORT} });
   }
 
   start() {
@@ -50,7 +50,7 @@ export default class server {
       });
     });
 
-    console.log("Servidor escuchando en 5000");
+    console.log("Servidor escuchando en ${process.env.PORT}");
   }
 }
 

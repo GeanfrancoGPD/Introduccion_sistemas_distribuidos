@@ -5,4 +5,10 @@ export default class Calculadora {
   restar(a, b) {
     return a - b;
   }
+  multiplicar(a, b, c) {
+    return a * b * c;
+  }
+  divicion(a, b) {
+    return a / b;
+  }
 }

@@ -4,9 +4,9 @@ import generateServer from "./src/generateServer.js";
 import generateClient from "./src/generateClient.js";
 
 const content = fs.readFileSync("calc.dl", "utf8");
-const ast = parseDL(content);
+const data = parseDL(content);
 
-console.log(ast.methods);
+console.log(data);
 
-generateServer(ast);
-generateClient(ast);
+generateServer(data);
+generateClient(data);

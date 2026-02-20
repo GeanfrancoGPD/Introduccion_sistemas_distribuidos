@@ -2,6 +2,7 @@
   "name": "ms-operaciones",
   "version": "1.0.0",
   "main": "service.js",
+  "type": "module",
   "dependencies": {
     "express": "^4.18.2",
     "systeminformation": "^5.21.22"
