@@ -1,0 +1,14 @@
+{
+  "name": "refugio-grpc",
+  "version": "1.0.0",
+  "description": "Mini sistema de refugio de perros usando gRPC y JS",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "client": "node client.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.10.0",
+    "@grpc/proto-loader": "^0.7.10"
+  }
+}

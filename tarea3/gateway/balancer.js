@@ -2,7 +2,7 @@ const axios = require('axios');
 
 const SERVERS = [
     { id: "Servidor 1", url: "http://localhost:3001" },
-    { id: "Servidor 2", url: "http://192.168.1.XX:3002" } 
+    { id: "Servidor 2", url: "http://192.168.88.216:3002" } 
 ];
 
 async function selectBestServer() {
