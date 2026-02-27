@@ -3,7 +3,7 @@
     "id": 1,
     "nombre": "Rex",
     "raza": "Pastor Alemán",
-    "disponible": true
+    "disponible": false
   },
   {
     "id": 2,

@@ -4,10 +4,12 @@
 
 @Constructor: constructor() {}
 
+@Method:Status():string{}
+
 @Method:sumar(a:int, b:int):int {}
 
 @Method:restar(a:int, b:int):int {}
 
 @Method:multiplicar(a:int, b:int, c:int):int {}
 
-@Method:divicion(a:int, b:int):int {}
+@Method:division(a:int, b:int):int {}

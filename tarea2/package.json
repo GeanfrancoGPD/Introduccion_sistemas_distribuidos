@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Mini sistema de refugio de perros usando gRPC y JS",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js",
     "client": "node client.js"
