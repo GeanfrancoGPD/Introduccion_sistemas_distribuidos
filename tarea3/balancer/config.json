@@ -1,0 +1,12 @@
+{
+  "nodes": [
+    { "id": "PC-01", "host": "127.0.0.1", "agent_port": 4000 },
+    { "id": "PC-02", "host": "127.0.0.1", "agent_port": 4001 }
+  ],
+  "services": {
+    "REST": 3001,
+    "JSON_RPC": 3002,
+    "MQTT": 1883,
+    "RSI": 3003
+  }
+}
