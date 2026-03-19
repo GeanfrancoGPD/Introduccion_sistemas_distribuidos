@@ -45,8 +45,6 @@ class RefugioServer {
     return JSON.parse(data);
   }
 
-  // Guardar datos
-
   guardarBD(data) {
     writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
   }

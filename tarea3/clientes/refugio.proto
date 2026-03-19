@@ -7,8 +7,6 @@ service RefugioService {
   rpc ObtenerPerros (Vacio) returns (ListaPerros);
   // Solicitar adopción
   rpc AdoptarPerro (SolicitudAdopcion) returns (RespuestaAdopcion);
-  // Obtener métricas del servicio
-  rpc ObtenerMetricas (Vacio) returns (RespuestaMetricas);
 }
 
 message Vacio {}
@@ -31,13 +29,4 @@ message SolicitudAdopcion {
 message RespuestaAdopcion {
   bool exito = 1;
   string mensaje = 2;
-}
-
-message RespuestaMetricas {
-  string service = 1;
-  int64 uptime_seconds = 2;
-  repeated double cpu_usage = 3;
-  double free_memory = 4;
-  double total_memory = 5;
-  int32 perros_disponibles = 6;
 }

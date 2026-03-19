@@ -1,7 +1,9 @@
 import { loadPackageDefinition } from "@grpc/grpc-js";
 import { loadSync } from "@grpc/proto-loader";
 import grpc from "@grpc/grpc-js";
+import promptSync from "prompt-sync";
 
+const prompt = promptSync({ sigint: true });
 // Cargar el archivo .proto
 const packageDef = loadSync("refugio.proto", { keepCase: true });
 const refugioProto = loadPackageDefinition(packageDef).refugio;
@@ -31,8 +33,8 @@ client.ObtenerPerros({}, (err, response) => {
   }
 
   // 2. Intentar adoptar un perro (cambia el ID aquí para probar distintos escenarios)
-  const id_Perro = 1;
-  console.log(`\nSolicitando adopción del perro con ID: ${id_Perro}...`);
+  let id_Perro = prompt("Ingrese el ID del perro que desea adoptar: ");
+  console.log(id_Perro);
 
   client.AdoptarPerro({ id_perro: id_Perro }, (err, res) => {
     if (err) {
@@ -41,9 +43,9 @@ client.ObtenerPerros({}, (err, response) => {
     }
 
     if (res.exito) {
-      console.log("✅ RESPUESTA DEL SERVIDOR:", res.mensaje);
+      console.log(" RESPUESTA DEL SERVIDOR:", res.mensaje);
     } else {
-      console.log("❌ RESPUESTA DEL SERVIDOR:", res.mensaje);
+      console.log(" RESPUESTA DEL SERVIDOR:", res.mensaje);
     }
   });
 });

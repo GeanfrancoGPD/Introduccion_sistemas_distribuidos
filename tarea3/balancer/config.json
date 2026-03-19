@@ -1,12 +1,24 @@
 {
-  "nodes": [
+  "pcs": [
     { "id": "PC-01", "host": "127.0.0.1", "agent_port": 4000 },
     { "id": "PC-02", "host": "127.0.0.1", "agent_port": 4001 }
   ],
-  "services": {
-    "REST": 3001,
-    "JSON_RPC": 3002,
-    "MQTT": 1883,
-    "RSI": 3003
-  }
+  "services": [
+    {
+      "name": "REST",
+      "port": 3001
+    },
+    {
+      "name": "JSON_RPC",
+      "port": 3002
+    },
+    {
+      "name": "MQTT",
+      "port": 1883
+    },
+    {
+      "name": "RSI",
+      "port": 3003
+    }
+  ]
 }

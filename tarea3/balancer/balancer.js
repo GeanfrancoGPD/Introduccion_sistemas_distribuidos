@@ -1,109 +1,259 @@
-const http = require('http');
-const net = require('net');
-const httpProxy = require('http-proxy');
-const config = require('./config.json');
+import { get, createServer } from "http";
+import { connect as connectNet } from "net";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { connect as connectMqtt } from "mqtt";
+import { loadSync } from "@grpc/proto-loader";
+import {
+  loadPackageDefinition,
+  credentials as grpcCredentials,
+} from "@grpc/grpc-js";
+import os from "os";
 
-const proxy = httpProxy.createProxyServer({});
-let stats = [];
+let lista_pcs = [];
+const serviceStart = Date.now();
+const MQTT_BROKER = "mqtt://test.mosquitto.org";
+const MQTT_METRICS_REQ_TOPIC = "tarea3/mqtt/metricas/get";
+const MQTT_METRICS_RES_BASE_TOPIC = "tarea3/mqtt/metricas/resp";
 
-// 1. Fase de Descubrimiento (Auto-Discovery)
-async function initNodes() {
-  console.log("Detectando hardware de los nodos en la red...");
-  
-  for (const node of config.nodes) {
-    try {
-      const specs = await new Promise((resolve, reject) => {
-        http.get(`http://${node.host}:${node.agent_port}/specs`, (resp) => {
-          let data = '';
-          resp.on('data', chunk => data += chunk);
-          resp.on('end', () => resolve(JSON.parse(data)));
-        }).on("error", reject);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const protoPath = join(__dirname, "..", "refugio", "refugio.proto");
+const packageDef = loadSync(protoPath, { keepCase: true });
+const refugioProto = loadPackageDefinition(packageDef).refugio;
+
+class Balanceador {
+  constructor() {
+    this.services = [];
+    this.leerPCs();
+    this.getBalancerMetrics = this.getBalancerMetrics.bind(this);
+  }
+
+  leerPCs() {
+    const data = readFileSync("./balancer/config.json", "utf8");
+    lista_pcs = JSON.parse(data);
+    this.services = lista_pcs.services;
+    console.log("Listas de PC operando", lista_pcs.pcs);
+    console.log(
+      "Servicios",
+      this.services.map((s) => s.name),
+    );
+    console.log(
+      "Nombre de Pc:",
+      lista_pcs.pcs.map((pc) => pc.id),
+      "| Host:",
+      lista_pcs.pcs.map((pc) => pc.host),
+    );
+  }
+
+  getServicePort(name, fallbackPort) {
+    const service = this.services.find((s) => s.name === name);
+    return service?.port ?? fallbackPort;
+  }
+
+  getBalancerMetrics() {
+    return {
+      service: "balancer",
+      uptimeSeconds: Math.floor((Date.now() - serviceStart) / 1000),
+      loadedServices: this.services?.map((s) => s.name) ?? [],
+      configuredPCs: lista_pcs.pcs?.length ?? 0,
+      cpuUsage: os.loadavg(),
+      freeMemory: (os.freemem() / (1024 * 1024 * 1024)).toFixed(3),
+      totalMemory: (os.totalmem() / (1024 * 1024 * 1024)).toFixed(3),
+    };
+  }
+
+  safeMetricsFetch(fetcher) {
+    return fetcher()
+      .then((data) => ({ ok: true, data }))
+      .catch((err) => ({ ok: false, error: err.message }));
+  }
+
+  httpGetJson(url, timeoutMs = 4000) {
+    return new Promise((resolve, reject) => {
+      const req = get(url, (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          if (res.statusCode !== 200) {
+            return reject(new Error(`HTTP ${res.statusCode} en ${url}`));
+          }
+
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            reject(new Error(`Respuesta invalida en ${url}`));
+          }
+        });
       });
-      
-      stats.push({ ...node, specs, activeConnections: 0, latency: 0, totalRequests: 0 });
-      console.log(`[OK] ${node.id} detectada -> CPU: ${specs.cpu_speed}GHz, RAM: ${specs.ram}GB`);
-    } catch (err) {
-      console.log(`[ERROR] No se encontro el Agente en ${node.id} (${node.host}:${node.agent_port})`);
-    }
+
+      req.on("error", reject);
+      req.setTimeout(timeoutMs, () => {
+        req.destroy(new Error(`Timeout consultando ${url}`));
+      });
+    });
   }
 
-  if (stats.length === 0) {
-    console.error("Ningun nodo respondio. Apagando balanceador.");
-    process.exit(1);
+  getRefugioMetrics(host, port) {
+    return new Promise((resolve, reject) => {
+      const client = new refugioProto.RefugioService(
+        `${host}:${port}`,
+        grpcCredentials.createInsecure(),
+      );
+
+      client.ObtenerMetricas({}, (err, response) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(response);
+      });
+    });
   }
-  
-  startBalancer(); // Iniciar el balanceador solo si hay hardware detectado
-}
 
-// 2. Logica del Balanceador
-function getBestNode() {
-  return stats.sort((a, b) => {
-    const scoreA = (a.activeConnections * a.latency + 1) / (a.specs.cpu_speed * a.specs.ram);
-    const scoreB = (b.activeConnections * b.latency + 1) / (b.specs.cpu_speed * b.specs.ram);
-    return scoreA - scoreB;
-  })[0];
-}
+  getAhorcadoMetrics(host, port) {
+    return new Promise((resolve, reject) => {
+      const socket = connectNet(port, host, () => {
+        socket.write("metricas");
+      });
 
-function startBalancer() {
-  // Balanceador HTTP (REST y gRPC-Gateway)
-  http.createServer((req, res) => {
-    // NUEVA RUTA: El cliente llama aqui para que el balanceador imprima
-    if (req.url === '/print-stats') {
-      console.log("\n=======================================================");
-      console.log("       ESTADISTICAS FINALES DE BALANCEO");
-      console.table(stats.map(s => ({
-        Nodo: s.id,
-        "CPU (GHz)": s.specs.cpu_speed,
-        "RAM (GB)": s.specs.ram,
-        Latencia_ms: s.latency,
-        Peticiones_Atendidas: s.totalRequests
-      })));
-      console.log("=======================================================\n");
-      res.writeHead(200);
-      return res.end("Impreso en consola del balanceador");
+      socket.setTimeout(3000);
+      socket.once("data", (data) => {
+        try {
+          resolve(JSON.parse(data.toString()));
+        } catch {
+          reject(new Error("Respuesta invalida del servicio RSI"));
+        } finally {
+          socket.end();
+        }
+      });
+
+      socket.once("error", reject);
+      socket.once("timeout", () => {
+        socket.destroy();
+        reject(new Error("Timeout consultando metricas RSI"));
+      });
+    });
+  }
+
+  getMqttMetrics() {
+    return new Promise((resolve, reject) => {
+      const correlationId = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      const responseTopic = `${MQTT_METRICS_RES_BASE_TOPIC}/${correlationId}`;
+      const client = connectMqtt(MQTT_BROKER);
+
+      const failAndClose = (error) => {
+        client.end(true, () => reject(error));
+      };
+
+      const timeout = setTimeout(() => {
+        failAndClose(new Error("Timeout consultando metricas MQTT"));
+      }, 4000);
+
+      client.on("connect", () => {
+        client.subscribe(responseTopic, (subError) => {
+          if (subError) {
+            clearTimeout(timeout);
+            failAndClose(subError);
+            return;
+          }
+
+          client.publish(
+            MQTT_METRICS_REQ_TOPIC,
+            JSON.stringify({ correlationId }),
+          );
+        });
+      });
+
+      client.on("message", (topic, payload) => {
+        if (topic !== responseTopic) {
+          return;
+        }
+
+        clearTimeout(timeout);
+        try {
+          const metrics = JSON.parse(payload.toString());
+          client.end(true, () => resolve(metrics));
+        } catch {
+          failAndClose(new Error("Respuesta invalida de metricas MQTT"));
+        }
+      });
+
+      client.on("error", (err) => {
+        clearTimeout(timeout);
+        failAndClose(err);
+      });
+    });
+  }
+
+  async getAllServiceMetrics() {
+    const Metrics = {};
+    for (const pc of lista_pcs.pcs ?? []) {
+      try {
+        const [calculadora, refugio, ahorcado, mqtt, agentes] =
+          await Promise.all([
+            this.safeMetricsFetch(() =>
+              this.httpGetJson("http://127.0.0.1:5000/calculadora/metricas"),
+            ),
+            this.safeMetricsFetch(() =>
+              this.getRefugioMetrics("127.0.0.1", 5051),
+            ),
+            this.safeMetricsFetch(() =>
+              this.getAhorcadoMetrics(
+                "127.0.0.1",
+                this.getServicePort("RSI", 3003),
+              ),
+            ),
+            this.safeMetricsFetch(this.getMqttMetrics),
+          ]);
+        Metrics[pc.id] = {
+          calculadora,
+          refugio,
+          ahorcado,
+          mqtt,
+          agentes,
+        };
+      } catch (error) {
+        console.error(`Error consultando metricas para PC ${pc.id}:`, error);
+      }
     }
 
-    if (req.url === '/stats') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify(stats, null, 2));
-    }
+    return {
+      balancer: this.getBalancerMetrics(),
+      ...Metrics,
+      generatedAt: new Date().toISOString(),
+    };
+  }
 
-    const node = getBestNode();
-    const start = Date.now();
-    const port = req.url.includes('/rpc') ? config.services.JSON_RPC : config.services.REST;
-    
-    node.activeConnections++;
-    proxy.web(req, res, { target: `http://${node.host}:${port}` }, () => node.activeConnections--);
-    
-    res.on('finish', () => {
-      node.activeConnections--;
-      node.latency = Date.now() - start;
-      node.totalRequests++;
-      console.log(`[BALANCER] HTTP derivado a -> ${node.id}`);
-    });
-  }).listen(8000, '0.0.0.0');
+  createServer() {
+    return createServer(async (req, res) => {
+      if (req.url === "/balancer/metricas") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify(this.getBalancerMetrics()));
+      }
+      if (req.url === "/metricas") {
+        const metrics = await this.getAllServiceMetrics();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify(metrics));
+      }
 
-  // Balanceador TCP (RSI)
-  net.createServer((cSocket) => {
-    const node = getBestNode();
-    const start = Date.now();
-    node.activeConnections++;
-    const sSocket = net.connect(config.services.RSI, node.host, () => {
-      cSocket.pipe(sSocket);
-      sSocket.pipe(cSocket);
+      if (req.url === "/stats") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify(lista_pcs, null, 2));
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Ruta no encontrada" }));
+    }).listen(8000, "0.0.0.0", () => {
+      console.log(
+        "Endpoint de metricas del balanceador en http://localhost:8000/balancer/metricas",
+      );
+      console.log(
+        "Endpoint agregado de metricas en http://localhost:8000/metricas",
+      );
     });
-    cSocket.on('close', () => {
-      node.activeConnections--;
-      node.latency = Date.now() - start;
-      node.totalRequests++;
-      console.log(`[BALANCER] TCP/RSI derivado a -> ${node.id}`);
-    });
-    sSocket.on('error', () => cSocket.end());
-    cSocket.on('error', () => sSocket.end());
-  }).listen(8001, '0.0.0.0');
-
-  console.log("\nBALANCEADOR ONLINE | HTTP: 8000 | RSI: 8001");
+  }
 }
 
-// Ejecutar la secuencia
-initNodes();
+const balanceador = new Balanceador();
+balanceador.createServer();

@@ -1,4 +1,4 @@
-import ProxyCalculadora from "./servidores/proxyCalculadora.js";
+import ProxyCalculadora from "../calculadora/servidores/proxyCalculadora.js";
 
 async function main() {
   const cli = new ProxyCalculadora();

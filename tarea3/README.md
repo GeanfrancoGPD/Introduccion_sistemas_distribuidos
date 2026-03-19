@@ -6,26 +6,30 @@ Este proyecto es un sistema de balanceo de carga dinámico desarrollado en **Nod
 
 El sistema expone 4 servicios distintos, cada uno utilizando una arquitectura de comunicación diferente:
 
-1.  **REST (Calculadora):** Microservicio HTTP para operaciones matemáticas efímeras.
+1.  **REST (Calculadora):** Microservicio HTTP para operaciones matemáticas simples.
 2.  **JSON-RPC (Refugio de Animales):** Gestión de datos estructurados (CRUD) para procesos de adopción.
 3.  **MQTT (Lorem Ipsum):** Generador de tráfico masivo para pruebas de saturación de red.
-4.  **RSI (Ahorcado):** *Remote Subroutine Invocation* sobre TCP para lógica de estado (Juego del Ahorcado).
+4.  **RSI (Ahorcado):** _Remote Subroutine Invocation_ sobre TCP para lógica de estado (Juego del Ahorcado).
 
 ---
 
 ## Algoritmo de Balanceo (Hardware-Aware)
 
 El balanceador elige el mejor nodo calculando un **Score de Aptitud** basado en:
-* **Specs:** CPU (GHz), RAM (GB) y Tipo de Disco (SSD/HDD).
-* **Rendimiento:** Latencia (ms) y Conexiones Activas.
+
+- **Specs:** CPU (GHz), RAM (GB) y Tipo de Disco (SSD/HDD).
+- **Rendimiento:** Latencia (ms) y Conexiones Activas.
 
 ---
+
 ## Guía de Arranque del Proyecto (PowerShell)
 
 Siga estos pasos para ejecutar el sistema correctamente en su entorno local o en red utilizando **PowerShell**.
 
 ### 1. Requisitos Previos
+
 Asegúrese de tener instalado [Node.js](https://nodejs.org/). Instale las dependencias necesarias abriendo una terminal en la carpeta del proyecto:
+
 ```powershell
 npm install http-proxy jayson mqtt
 
@@ -54,3 +58,4 @@ Stop-Process -Name node -Force
 
 📊 Monitoreo y Configuración
 Web Stats: Puede consultar el estado de los nodos en vivo en: http://localhost:8000/stats
+```
