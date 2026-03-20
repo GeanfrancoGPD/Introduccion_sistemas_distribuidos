@@ -1,10 +1,13 @@
 // import { WebSocketServer } from "ws";
-import { createServer } from "http";
+import express from "express";
 import os from "os";
 import Calculadora from "./Calculadora.js";
 
 const instance = new Calculadora();
 const serviceStart = Date.now();
+const app = express();
+
+app.use(express.json());
 
 function getMetrics() {
   return {
@@ -15,45 +18,39 @@ function getMetrics() {
     totalMemory: (os.totalmem() / (1024 * 1024 * 1024)).toFixed(3),
   };
 }
+app.get("/calculadora/metricas", (_req, res) => {
+  return res.status(200).json(getMetrics());
+});
 
-const httpServer = createServer((req, res) => {
-  if (req.url === "/calculadora/metricas") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify(getMetrics()));
-  }
+app.get("/calculadora/methods", (_req, res) => {
+  const methods = Object.getOwnPropertyNames(Calculadora.prototype).filter(
+    (m) => m !== "constructor",
+  );
+  return res.status(200).json({ methods });
+});
 
-  if (req.url === "/calculadora/methods" && req.method === "GET") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    const methods = Object.getOwnPropertyNames(Calculadora.prototype).filter(
-      (m) => m !== "constructor",
-    );
-    return res.end(JSON.stringify({ methods }));
-  }
+app.post("/calculadora/methods", (req, res) => {
+  try {
+    const { method, params } = req.body || {};
+    if (typeof instance[method] === "function") {
+      const safeParams = Array.isArray(params) ? params : [];
+      const result = instance[method](...safeParams);
+      return res.status(200).json({ result });
+    }
 
-  if (req.url === "/calculadora/methods" && req.method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      try {
-        const { method, params } = JSON.parse(body);
-        if (typeof instance[method] === "function") {
-          const result = instance[method](...params);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          return res.end(JSON.stringify({ result }));
-        } else {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          return res.end(JSON.stringify({ error: "Método no existe" }));
-        }
-      } catch (err) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ error: "JSON inválido" }));
-      }
-    });
-  } else {
-    res.writeHead(404, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ error: "Endpoint no encontrado" }));
+    return res.status(400).json({ error: "Método no existe" });
+  } catch {
+    return res.status(400).json({ error: "JSON inválido" });
   }
-}).listen(3001, "0.0.0.0");
+});
+
+app.use((_req, res) => {
+  return res.status(404).json({ error: "Endpoint no encontrado" });
+});
+
+app.listen(3001, "0.0.0.0", () => {
+  console.log("[REST]Servidor de calculadora escuchando en puerto 3001");
+});
 
 //"Endpoint de métodos en http://localhost:3001/calculadora/methods (GET para listar, POST para ejecutar)",
 

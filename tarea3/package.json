@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",
+    "express": "^5.2.1",
     "http-proxy": "^1.18.1",
     "mqtt": "^5.15.0"
   }

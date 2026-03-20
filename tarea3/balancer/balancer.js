@@ -1,9 +1,10 @@
-import { get, createServer } from "http";
+import { get } from "http";
 import { connect as connectNet } from "net";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { connect as connectMqtt } from "mqtt";
+import express from "express";
 import { loadSync } from "@grpc/proto-loader";
 import {
   loadPackageDefinition,
@@ -26,6 +27,7 @@ const refugioProto = loadPackageDefinition(packageDef).refugio;
 class Balanceador {
   constructor() {
     this.services = [];
+    this.lastExecution = null;
     this.leerPCs();
     this.getBalancerMetrics = this.getBalancerMetrics.bind(this);
   }
@@ -228,8 +230,7 @@ class Balanceador {
 
   normalizeServiceName(serviceName) {
     const normalized = (serviceName ?? "").toUpperCase();
-    if (normalized === "GRPC") return "REFUGIO";
-    if (normalized === "JSON_RPC") return "REFUGIO";
+    if (normalized === "REFUGIO") return "JSON_RPC";
     return normalized;
   }
 
@@ -321,6 +322,8 @@ class Balanceador {
       );
     }
 
+    console.log("[BALANCER] Pc con mejor metrica:", best.pcId);
+
     return {
       service: normalizedService,
       pcId: best.pcId,
@@ -356,10 +359,25 @@ class Balanceador {
 
   async executeRest(host, method, params = []) {
     const port = this.getServicePort("REST", 3001);
-    return this.httpPostJson(`http://${host}:${port}/calculadora/methods`, {
+    console.log(
+      "[REST]Nuevo servicio .....Port:",
+      port,
+      "Host:",
+      host,
+      "Metodo:",
       method,
+      "Params:",
       params,
+    );
+
+    const response = await fetch(`http://${host}:${port}/calculadora/methods`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method, params }),
     });
+
+    const data = await response.json();
+    return data;
   }
 
   async executeRsi(host, method, params = []) {
@@ -475,80 +493,132 @@ class Balanceador {
   async execute(serviceName, method, params) {
     const normalizedService = this.normalizeServiceName(serviceName);
     const best = await this.compareMetrics(normalizedService);
+    console.log(
+      "[Ejecucion del servicio] serviceName:",
+      serviceName,
+      "| metrod:",
+      method,
+      "| Params:",
+      params,
+    );
 
     if (normalizedService === "REST") {
       const result = await this.executeRest(best.host, method, params);
-      return { service: normalizedService, host: best.host, result };
+
+      const execution = { service: normalizedService, host: best.host, result };
+      this.lastExecution = {
+        service: normalizedService,
+        host: best.host,
+        method,
+        at: new Date().toISOString(),
+      };
+      return execution;
     }
 
     if (normalizedService === "RSI") {
       const result = await this.executeRsi(best.host, method, params);
-      return { service: normalizedService, host: best.host, result };
+      const execution = { service: normalizedService, host: best.host, result };
+      this.lastExecution = {
+        service: normalizedService,
+        host: best.host,
+        method,
+        at: new Date().toISOString(),
+      };
+      return execution;
     }
 
     if (normalizedService === "MQTT") {
       const result = await this.executeMqtt(best.host, method, params);
-      return { service: normalizedService, host: best.host, result };
+      const execution = { service: normalizedService, host: best.host, result };
+      this.lastExecution = {
+        service: normalizedService,
+        host: best.host,
+        method,
+        at: new Date().toISOString(),
+      };
+      return execution;
     }
 
     if (normalizedService === "REFUGIO") {
       const result = await this.executeRefugio(best.host, method, params);
-      return { service: normalizedService, host: best.host, result };
+      const execution = { service: normalizedService, host: best.host, result };
+      this.lastExecution = {
+        service: normalizedService,
+        host: best.host,
+        method,
+        at: new Date().toISOString(),
+      };
+      return execution;
     }
 
     throw new Error(`Servicio no soportado en execute: ${serviceName}`);
   }
 
   createServer() {
-    return createServer(async (req, res) => {
-      if (req.url === "/balancer/metricas") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify(this.getBalancerMetrics()));
-      }
-      if (req.url === "/metricas") {
+    const app = express();
+    app.use(express.json());
+
+    app.get("/balancer/metricas", (_req, res) => {
+      res.status(200).json(this.getBalancerMetrics());
+    });
+
+    app.get("/metricas", async (_req, res) => {
+      try {
         const metrics = await this.getAllServiceMetrics();
-        res.writeHead(200, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify(metrics));
-      }
-
-      if (req.url === "/stats") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify(lista_pcs, null, 2));
-      }
-
-      if (req.url === "/execute" && req.method === "POST") {
-        let body = "";
-        req.on("data", (chunk) => (body += chunk));
-        req.on("end", async () => {
-          try {
-            const { serviceName, method, params } = JSON.parse(body || "{}");
-            if (!serviceName || !method) {
-              res.writeHead(400, { "Content-Type": "application/json" });
-              return res.end(
-                JSON.stringify({
-                  error: "serviceName y method son obligatorios",
-                }),
-              );
-            }
-
-            const result = await this.execute(serviceName, method, params);
-            res.writeHead(200, { "Content-Type": "application/json" });
-            return res.end(JSON.stringify(result));
-          } catch (error) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-            return res.end(
-              JSON.stringify({
-                error: error.message || "Error interno del balanceador",
-              }),
-            );
-          }
+        res.status(200).json(metrics);
+      } catch (error) {
+        res.status(500).json({
+          error: error.message || "Error obteniendo metricas",
         });
-        return;
+      }
+    });
+
+    app.get("/stats", (_req, res) => {
+      res.status(200).json(lista_pcs);
+    });
+
+    app.get("/servicio-activo", (_req, res) => {
+      if (!this.lastExecution) {
+        return res.status(200).json({
+          message: "Aun no se ha ejecutado ningun servicio",
+        });
       }
 
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Ruta no encontrada" }));
-    }).listen(8000, "0.0.0.0", () => {
+      return res.status(200).json(this.lastExecution);
+    });
+
+    app.post("/execute", async (req, res) => {
+      try {
+        const { serviceName, method, params } = req.body || {};
+        // console.log(
+        //   "[MENSAJE IMPORTANTE], Servicio:",
+        //   serviceName,
+        //   "| Metodo:",
+        //   method,
+        //   "| Params:",
+        //   params,
+        // );
+
+        if (!serviceName || !method) {
+          return res.status(400).json({
+            error: "serviceName y method son obligatorios",
+          });
+        }
+
+        const result = await this.execute(serviceName, method, params);
+        return res.status(200).json(result);
+      } catch (error) {
+        return res.status(500).json({
+          error: error.message || "Error interno del balanceador",
+        });
+      }
+    });
+
+    app.use((_req, res) => {
+      res.status(404).json({ error: "Ruta no encontrada" });
+    });
+
+    return app.listen(8000, "0.0.0.0", () => {
       console.log(
         "Endpoint de metricas del balanceador en http://localhost:8000/balancer/metricas",
       );
@@ -556,6 +626,9 @@ class Balanceador {
         "Endpoint agregado de metricas en http://localhost:8000/metricas",
       );
       console.log("Endpoint de ejecucion en http://localhost:8000/execute");
+      console.log(
+        "Endpoint de ultimo servicio ejecutado en http://localhost:8000/servicio-activo",
+      );
     });
   }
 }
