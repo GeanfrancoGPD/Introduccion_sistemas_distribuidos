@@ -4,7 +4,7 @@
   "description": "Este proyecto es un sistema de balanceo de carga dinámico desarrollado en **Node.js**, diseñado para distribuir tareas entre múltiples nodos (PCs) basándose en métricas de hardware y rendimiento en tiempo real.",
   "main": "agent.js",
   "scripts": {
-    "start_server": "concurrently \"node agent.js 4000\" \"node agent.js 4001\" \"node balancer/balancer.js\" \"node calculadora/servidores/server.js\" \"node refugio/server.js\" \"node mqtt/service_mqtt.js\" \"node ahorcado/service_rsi.js\"",
+    "start_server": "concurrently \"node balancer/balancer.js\" \"node calculadora/servidores/server.js\" \"node refugio/server.js\" \"node mqtt/service_mqtt.js\" \"node ahorcado/service_rsi.js\"",
     "start_agent": "node agent.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

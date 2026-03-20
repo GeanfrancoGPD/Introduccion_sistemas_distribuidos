@@ -13,9 +13,9 @@ import os from "os";
 
 let lista_pcs = [];
 const serviceStart = Date.now();
-const MQTT_BROKER = "mqtt://test.mosquitto.org";
-const MQTT_METRICS_REQ_TOPIC = "tarea3/mqtt/metricas/get";
-const MQTT_METRICS_RES_BASE_TOPIC = "tarea3/mqtt/metricas/resp";
+const MQTT_BROKER = "mqtt://broker.hivemq.com";
+const MQTT_METRICS_REQ_TOPIC = "mqtt/metricas/get";
+const MQTT_METRICS_RES_BASE_TOPIC = "mqtt/metricas/resp";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -191,28 +191,28 @@ class Balanceador {
     const Metrics = {};
     for (const pc of lista_pcs.pcs ?? []) {
       try {
-        const [calculadora, refugio, ahorcado, mqtt, agentes] =
-          await Promise.all([
-            this.safeMetricsFetch(() =>
-              this.httpGetJson("http://127.0.0.1:5000/calculadora/metricas"),
+        const [calculadora, refugio, ahorcado, mqtt] = await Promise.all([
+          this.safeMetricsFetch(() =>
+            this.httpGetJson(
+              `http://${pc.host}:${this.getServicePort("REST", 3001)}/calculadora/metricas`,
             ),
-            this.safeMetricsFetch(() =>
-              this.getRefugioMetrics("127.0.0.1", 5051),
+          ),
+          this.safeMetricsFetch(() =>
+            this.getRefugioMetrics(
+              pc.host,
+              this.getServicePort("REFUGIO", 5051),
             ),
-            this.safeMetricsFetch(() =>
-              this.getAhorcadoMetrics(
-                "127.0.0.1",
-                this.getServicePort("RSI", 3003),
-              ),
-            ),
-            this.safeMetricsFetch(this.getMqttMetrics),
-          ]);
+          ),
+          this.safeMetricsFetch(() =>
+            this.getAhorcadoMetrics(pc.host, this.getServicePort("RSI", 3003)),
+          ),
+          this.safeMetricsFetch(() => this.getMqttMetrics()),
+        ]);
         Metrics[pc.id] = {
           calculadora,
           refugio,
           ahorcado,
           mqtt,
-          agentes,
         };
       } catch (error) {
         console.error(`Error consultando metricas para PC ${pc.id}:`, error);
@@ -224,6 +224,279 @@ class Balanceador {
       ...Metrics,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  normalizeServiceName(serviceName) {
+    const normalized = (serviceName ?? "").toUpperCase();
+    if (normalized === "GRPC") return "REFUGIO";
+    if (normalized === "JSON_RPC") return "REFUGIO";
+    return normalized;
+  }
+
+  normalizeMetrics(rawMetrics = {}) {
+    const cpuRaw = rawMetrics.cpuUsage ?? rawMetrics.cpu_usage ?? 0;
+    const cpu = Array.isArray(cpuRaw) ? Number(cpuRaw[0] ?? 0) : Number(cpuRaw);
+    return {
+      cpu: Number.isNaN(cpu) ? Number.MAX_VALUE : cpu,
+      mem: parseFloat(rawMetrics.freeMemory ?? rawMetrics.free_memory ?? 0),
+      uptime: Number(
+        rawMetrics.uptimeSeconds ?? rawMetrics.uptime_seconds ?? 0,
+      ),
+      raw: rawMetrics,
+    };
+  }
+
+  compareNormalizedMetrics(current, best) {
+    let scoreCurrent = 0;
+    let scoreBest = 0;
+
+    if (current.mem > best.mem) scoreCurrent += 2;
+    else if (current.mem < best.mem) scoreBest += 2;
+
+    if (current.cpu < best.cpu) scoreCurrent += 1;
+    else if (current.cpu > best.cpu) scoreBest += 1;
+
+    if (current.uptime > best.uptime) scoreCurrent += 1;
+    else if (current.uptime < best.uptime) scoreBest += 1;
+
+    return scoreCurrent > scoreBest;
+  }
+
+  async getMetricsForService(host, serviceName) {
+    const normalizedService = this.normalizeServiceName(serviceName);
+
+    if (normalizedService === "REST") {
+      return this.httpGetJson(
+        `http://${host}:${this.getServicePort("REST", 3001)}/calculadora/metricas`,
+      );
+    }
+
+    if (normalizedService === "RSI") {
+      return this.getAhorcadoMetrics(host, this.getServicePort("RSI", 3003));
+    }
+
+    if (normalizedService === "MQTT") {
+      return this.getMqttMetrics();
+    }
+
+    if (normalizedService === "REFUGIO") {
+      return this.getRefugioMetrics(host, this.getServicePort("REFUGIO", 5051));
+    }
+
+    throw new Error(`Servicio no soportado para metricas: ${serviceName}`);
+  }
+
+  async compareMetrics(serviceName) {
+    const normalizedService = this.normalizeServiceName(serviceName);
+
+    const entries = await Promise.all(
+      (lista_pcs.pcs ?? []).map(async (pc) => {
+        const res = await this.safeMetricsFetch(() =>
+          this.getMetricsForService(pc.host, normalizedService),
+        );
+        return { pcId: pc.id, host: pc.host, result: res };
+      }),
+    );
+    let best = null;
+
+    for (const { pcId, host, result } of entries) {
+      if (!result.ok) {
+        continue;
+      }
+
+      const normalized = this.normalizeMetrics(result.data);
+      if (!best) {
+        best = { pcId, host, ...normalized };
+        continue;
+      }
+
+      if (this.compareNormalizedMetrics(normalized, best)) {
+        best = { pcId, host, ...normalized };
+      }
+    }
+
+    if (!best) {
+      throw new Error(
+        `No se pudo seleccionar host para el servicio ${normalizedService}`,
+      );
+    }
+
+    return {
+      service: normalizedService,
+      pcId: best.pcId,
+      host: best.host,
+      metrics: best.raw,
+    };
+  }
+
+  async httpPostJson(url, body, timeoutMs = 5000) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      const text = await response.text();
+      const parsed = text ? JSON.parse(text) : {};
+
+      if (!response.ok) {
+        throw new Error(parsed?.error || `HTTP ${response.status} en ${url}`);
+      }
+
+      return parsed;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async executeRest(host, method, params = []) {
+    const port = this.getServicePort("REST", 3001);
+    return this.httpPostJson(`http://${host}:${port}/calculadora/methods`, {
+      method,
+      params,
+    });
+  }
+
+  async executeRsi(host, method, params = []) {
+    const port = this.getServicePort("RSI", 3003);
+
+    return new Promise((resolve, reject) => {
+      const socket = connectNet(port, host, () => {
+        if (method === "play") {
+          socket.write(`play:${params?.[0] ?? "A"}`);
+          return;
+        }
+
+        if (method === "metricas") {
+          socket.write("metricas");
+          return;
+        }
+
+        socket.destroy();
+        reject(new Error(`Metodo RSI no soportado: ${method}`));
+      });
+
+      socket.setTimeout(4000);
+
+      socket.once("data", (data) => {
+        try {
+          resolve(JSON.parse(data.toString()));
+        } catch {
+          reject(new Error("Respuesta invalida del servicio RSI"));
+        } finally {
+          socket.end();
+        }
+      });
+
+      socket.once("error", reject);
+      socket.once("timeout", () => {
+        socket.destroy();
+        reject(new Error("Timeout ejecutando solicitud RSI"));
+      });
+    });
+  }
+
+  async executeRefugio(host, method, params = {}) {
+    const port = this.getServicePort("REFUGIO", 5051);
+    const client = new refugioProto.RefugioService(
+      `${host}:${port}`,
+      grpcCredentials.createInsecure(),
+    );
+
+    const mapMethods = {
+      ObtenerPerros: () =>
+        new Promise((resolve, reject) => {
+          client.ObtenerPerros({}, (err, response) => {
+            if (err) return reject(err);
+            resolve(response);
+          });
+        }),
+      AdoptarPerro: () =>
+        new Promise((resolve, reject) => {
+          client.AdoptarPerro(params, (err, response) => {
+            if (err) return reject(err);
+            resolve(response);
+          });
+        }),
+      ObtenerMetricas: () =>
+        new Promise((resolve, reject) => {
+          client.ObtenerMetricas({}, (err, response) => {
+            if (err) return reject(err);
+            resolve(response);
+          });
+        }),
+    };
+
+    if (!mapMethods[method]) {
+      throw new Error(`Metodo gRPC no soportado: ${method}`);
+    }
+
+    return mapMethods[method]();
+  }
+
+  async executeMqtt(_host, method, params = {}) {
+    if (method === "metricas") {
+      return this.getMqttMetrics();
+    }
+
+    const topic = params.topic || "mqtt/lorem";
+    const payload =
+      params.payload || `Mensaje desde balanceador: ${Date.now()}`;
+
+    return new Promise((resolve, reject) => {
+      const client = connectMqtt(MQTT_BROKER);
+      const timeout = setTimeout(() => {
+        client.end(true, () => reject(new Error("Timeout publicando en MQTT")));
+      }, 4000);
+
+      client.on("connect", () => {
+        client.publish(topic, String(payload), (err) => {
+          clearTimeout(timeout);
+          if (err) {
+            client.end(true, () => reject(err));
+            return;
+          }
+          client.end(true, () => resolve({ published: true, topic, payload }));
+        });
+      });
+
+      client.on("error", (err) => {
+        clearTimeout(timeout);
+        client.end(true, () => reject(err));
+      });
+    });
+  }
+
+  async execute(serviceName, method, params) {
+    const normalizedService = this.normalizeServiceName(serviceName);
+    const best = await this.compareMetrics(normalizedService);
+
+    if (normalizedService === "REST") {
+      const result = await this.executeRest(best.host, method, params);
+      return { service: normalizedService, host: best.host, result };
+    }
+
+    if (normalizedService === "RSI") {
+      const result = await this.executeRsi(best.host, method, params);
+      return { service: normalizedService, host: best.host, result };
+    }
+
+    if (normalizedService === "MQTT") {
+      const result = await this.executeMqtt(best.host, method, params);
+      return { service: normalizedService, host: best.host, result };
+    }
+
+    if (normalizedService === "REFUGIO") {
+      const result = await this.executeRefugio(best.host, method, params);
+      return { service: normalizedService, host: best.host, result };
+    }
+
+    throw new Error(`Servicio no soportado en execute: ${serviceName}`);
   }
 
   createServer() {
@@ -242,6 +515,37 @@ class Balanceador {
         res.writeHead(200, { "Content-Type": "application/json" });
         return res.end(JSON.stringify(lista_pcs, null, 2));
       }
+
+      if (req.url === "/execute" && req.method === "POST") {
+        let body = "";
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", async () => {
+          try {
+            const { serviceName, method, params } = JSON.parse(body || "{}");
+            if (!serviceName || !method) {
+              res.writeHead(400, { "Content-Type": "application/json" });
+              return res.end(
+                JSON.stringify({
+                  error: "serviceName y method son obligatorios",
+                }),
+              );
+            }
+
+            const result = await this.execute(serviceName, method, params);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify(result));
+          } catch (error) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            return res.end(
+              JSON.stringify({
+                error: error.message || "Error interno del balanceador",
+              }),
+            );
+          }
+        });
+        return;
+      }
+
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Ruta no encontrada" }));
     }).listen(8000, "0.0.0.0", () => {
@@ -251,6 +555,7 @@ class Balanceador {
       console.log(
         "Endpoint agregado de metricas en http://localhost:8000/metricas",
       );
+      console.log("Endpoint de ejecucion en http://localhost:8000/execute");
     });
   }
 }

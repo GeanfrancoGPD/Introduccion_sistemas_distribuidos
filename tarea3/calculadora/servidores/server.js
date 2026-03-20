@@ -1,4 +1,4 @@
-import { WebSocketServer } from "ws";
+// import { WebSocketServer } from "ws";
 import { createServer } from "http";
 import os from "os";
 import Calculadora from "./Calculadora.js";
@@ -22,40 +22,71 @@ const httpServer = createServer((req, res) => {
     return res.end(JSON.stringify(getMetrics()));
   }
 
-  res.writeHead(404, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: "Ruta no encontrada" }));
-});
-
-export default class server {
-  constructor() {
-    // Un solo puerto (5000): HTTP para metricas y upgrade para WebSocket.
-    this.socket = new WebSocketServer({ server: httpServer });
+  if (req.url === "/calculadora/methods" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    const methods = Object.getOwnPropertyNames(Calculadora.prototype).filter(
+      (m) => m !== "constructor",
+    );
+    return res.end(JSON.stringify({ methods }));
   }
 
-  start() {
-    this.socket.on("connection", (ws) => {
-      console.log("Cliente conectado");
-      ws.on("message", (message) => {
-        const req = JSON.parse(message);
-        const { method, params } = req;
-        console.log("Recibido método:", method, "con params:", params);
+  if (req.url === "/calculadora/methods" && req.method === "POST") {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      try {
+        const { method, params } = JSON.parse(body);
         if (typeof instance[method] === "function") {
           const result = instance[method](...params);
-          console.log("Enviado resultado:", result);
-          ws.send(JSON.stringify({ result }));
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ result }));
         } else {
-          ws.send(JSON.stringify({ error: "Método no existe" }));
+          res.writeHead(400, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: "Método no existe" }));
         }
-      });
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: "JSON inválido" }));
+      }
     });
-
-    console.log("Servidor escuchando en 5000");
-    console.log(
-      "Endpoint de metricas calculadora en http://localhost:5000/calculadora/metricas",
-    );
-    httpServer.listen(5000, "0.0.0.0");
+  } else {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ error: "Endpoint no encontrado" }));
   }
-}
+}).listen(3001, "0.0.0.0");
 
-const serverInstance = new server();
-serverInstance.start();
+//"Endpoint de métodos en http://localhost:3001/calculadora/methods (GET para listar, POST para ejecutar)",
+
+// export default class server {
+//   constructor() {
+//     // Un solo puerto (5000): HTTP para metricas y upgrade para WebSocket.
+//     this.socket = new WebSocketServer({ server: httpServer });
+//   }
+
+//   start() {
+//     this.socket.on("connection", (ws) => {
+//       console.log("Cliente conectado");
+//       ws.on("message", (message) => {
+//         const req = JSON.parse(message);
+//         const { method, params } = req;
+//         console.log("Recibido método:", method, "con params:", params);
+//         if (typeof instance[method] === "function") {
+//           const result = instance[method](...params);
+//           console.log("Enviado resultado:", result);
+//           ws.send(JSON.stringify({ result }));
+//         } else {
+//           ws.send(JSON.stringify({ error: "Método no existe" }));
+//         }
+//       });
+//     });
+
+//     console.log("Servidor escuchando en 5000");
+//     console.log(
+//       "Endpoint de metricas calculadora en http://localhost:5000/calculadora/metricas",
+//     );
+//     httpServer.listen(5000, "0.0.0.0");
+//   }
+// }
+
+// const serverInstance = new server();
+// serverInstance.start();

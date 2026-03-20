@@ -1,7 +1,7 @@
 {
   "pcs": [
-    { "id": "PC-01", "host": "127.0.0.1", "agent_port": 4000 },
-    { "id": "PC-02", "host": "127.0.0.1", "agent_port": 4001 }
+    { "id": "PC-01", "host": "127.0.0.1", "port": 4000 },
+    { "id": "PC-02", "host": "127.0.0.1", "port": 4000 }
   ],
   "services": [
     {
@@ -10,7 +10,7 @@
     },
     {
       "name": "JSON_RPC",
-      "port": 3002
+      "port": 5051
     },
     {
       "name": "MQTT",
