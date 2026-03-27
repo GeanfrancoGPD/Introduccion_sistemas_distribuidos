@@ -1,91 +1,132 @@
 import { connect } from "mqtt";
 import os from "os";
 
-const serviceStart = Date.now();
 const brokerUrl = "mqtt://broker.hivemq.com";
-let isConnected = false;
-let publishedMessages = 0;
-let lastPublishedAt = null;
-const METRICS_REQ_TOPIC = "mqtt/metricas/get";
-const METRICS_RES_BASE_TOPIC = "mqtt/metricas/resp";
+
+// Topics base
+const TOPICS = {
+  METRICS_REQ: "mqtt/metricas/get",
+  METRICS_RES: "mqtt/metricas/resp",
+  SALUDAR: "mqtt/api/saludar",
+  SUSCRIBIR: "mqtt/api/suscribir",
+  API_RES: "mqtt/api/resp",
+};
+
+const state = {
+  start: Date.now(),
+  connected: false,
+  publishedMessages: 0,
+  lastPublishedAt: null,
+};
 
 function getMetrics() {
   return {
     service: "mqtt",
     brokerUrl,
-    connected: isConnected,
-    uptimeSeconds: Math.floor((Date.now() - serviceStart) / 1000),
-    publishedMessages,
-    lastPublishedAt,
+    connected: state.connected,
+    uptimeSeconds: Math.floor((Date.now() - state.start) / 1000),
+    publishedMessages: state.publishedMessages,
+    lastPublishedAt: state.lastPublishedAt,
     cpuUsage: os.loadavg(),
-    freeMemory: (os.freemem() / (1024 * 1024 * 1024)).toFixed(3),
-    totalMemory: (os.totalmem() / (1024 * 1024 * 1024)).toFixed(3),
+    freeMemory: (os.freemem() / 1024 ** 3).toFixed(3),
+    totalMemory: (os.totalmem() / 1024 ** 3).toFixed(3),
   };
 }
 
-console.log("[MQTT] Iniciando servicio... buscando broker publico.");
 const client = connect(brokerUrl, {
   clientId: "mqtt_service_" + Math.random().toString(16).slice(2),
   reconnectPeriod: 2000,
-  keepalive: 60,
-  connectTimeout: 5000,
-  clean: true,
 });
+
+console.log("[MQTT] Iniciando servicio...");
+
 client.on("connect", () => {
-  isConnected = true;
-  console.log("[MQTT] Conectado exitosamente al broker publico.");
+  state.connected = true;
+  console.log("[MQTT] Conectado");
 
-  client.subscribe(METRICS_REQ_TOPIC, (err) => {
-    if (err) {
-      console.log(
-        "[MQTT] Error al suscribirse al topic de metricas:",
-        err.message,
-      );
-      return;
-    }
-    console.log(
-      `[MQTT] Escuchando solicitudes de metricas en ${METRICS_REQ_TOPIC}`,
-    );
-  });
+  client.subscribe(
+    [TOPICS.METRICS_REQ, TOPICS.SALUDAR, TOPICS.SUSCRIBIR],
+    (err) => {
+      if (err) {
+        console.log("[MQTT] Error suscripción:", err.message);
+        return;
+      }
+      console.log("[MQTT] Metodos listos: metricas, saludar, suscribir");
+    },
+  );
 
+  // Publicación automática
   setInterval(() => {
-    const msg = "Lorem Ipsum dolor sit amet...";
-    console.log(`[MQTT] Publicando rafaga: ${msg}`);
+    const msg = "Holaaa Suscribete...";
     client.publish("mqtt/lorem", msg);
-    publishedMessages += 1;
-    lastPublishedAt = new Date().toISOString();
+    state.publishedMessages++;
+    state.lastPublishedAt = new Date().toISOString();
   }, 1500);
 });
 
 client.on("message", (topic, payload) => {
-  if (topic !== METRICS_REQ_TOPIC) {
+  let body = {};
+
+  try {
+    body = JSON.parse(payload.toString() || "{}");
+  } catch {
+    console.log("[MQTT] JSON inválido");
     return;
   }
 
-  try {
-    const body = JSON.parse(payload.toString() || "{}");
-    const correlationId = body.correlationId || Date.now().toString();
-    const responseTopic = `${METRICS_RES_BASE_TOPIC}/${correlationId}`;
-    client.publish(responseTopic, JSON.stringify(getMetrics()));
-  } catch (err) {
-    console.log("[MQTT] Error procesando solicitud de metricas:", err.message);
+  const correlationId = body.correlationId || Date.now().toString();
+
+  // METRICAS
+  if (topic === TOPICS.METRICS_REQ) {
+    const resTopic = `${TOPICS.METRICS_RES}/${correlationId}`;
+    client.publish(resTopic, JSON.stringify(getMetrics()));
+    return;
+  }
+
+  const resTopic = `${TOPICS.API_RES}/${correlationId}`;
+
+  // Saludar
+  if (topic === TOPICS.SALUDAR) {
+    const nombre = body.nombre || "anonimo";
+
+    client.publish(
+      resTopic,
+      JSON.stringify({
+        message: `Hola!! ${nombre}`,
+      }),
+    );
+    return;
+  }
+
+  // SUSCRIBIR
+  if (topic === TOPICS.SUSCRIBIR) {
+    const newTopic = body.topic;
+
+    if (!newTopic) {
+      client.publish(resTopic, JSON.stringify({ error: "Falta topic" }));
+      return;
+    }
+
+    client.subscribe(newTopic, (err) => {
+      if (err) {
+        client.publish(resTopic, JSON.stringify({ error: err.message }));
+        return;
+      }
+
+      client.publish(
+        resTopic,
+        JSON.stringify({ message: `Suscrito a ${newTopic}` }),
+      );
+    });
   }
 });
 
 client.on("error", (err) => {
-  isConnected = false;
-  console.log("[MQTT] Error de conexion:", err.message);
+  state.connected = false;
+  console.log("[MQTT] Error:", err.message);
 });
 
 client.on("close", () => {
-  isConnected = false;
-  console.log("[MQTT] Conexion cerrada");
-});
-
-client.on("offline", () => {
-  console.log("[MQTT] Cliente offline");
-});
-
-client.on("reconnect", () => {
-  console.log("[MQTT] Reintentando conexion...");
+  state.connected = false;
+  console.log("[MQTT] Conexión cerrada");
 });

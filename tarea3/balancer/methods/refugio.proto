@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package refugio;
+
+service RefugioService {
+  // Obtener lista de perros disponibles
+  rpc ObtenerPerros (Vacio) returns (ListaPerros);
+  // Solicitar adopción
+  rpc AdoptarPerro (SolicitudAdopcion) returns (RespuestaAdopcion);
+  // Obtener métricas del servicio
+  rpc ObtenerMetricas (Vacio) returns (RespuestaMetricas);
+}
+
+message Vacio {}
+
+message Perro {
+  int32 id = 1;
+  string nombre = 2;
+  string raza = 3;
+  bool disponible = 4;
+}
+
+message ListaPerros {
+  repeated Perro perros = 1;
+}
+
+message SolicitudAdopcion {
+  int32 id_perro = 1;
+}
+
+message RespuestaAdopcion {
+  bool exito = 1;
+  string mensaje = 2;
+}
+
+message RespuestaMetricas {
+  string service = 1;
+  int64 uptime_seconds = 2;
+  repeated double cpu_usage = 3;
+  double free_memory = 4;
+  double total_memory = 5;
+  int32 perros_disponibles = 6;
+}

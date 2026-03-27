@@ -1,35 +1,33 @@
 import { get } from "http";
-import { connect as connectNet } from "net";
 import { readFileSync } from "fs";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
-import { connect as connectMqtt } from "mqtt";
 import express from "express";
-import { loadSync } from "@grpc/proto-loader";
-import {
-  loadPackageDefinition,
-  credentials as grpcCredentials,
-} from "@grpc/grpc-js";
 import os from "os";
+import { ExecuteRest, HttpPostJson } from "./methods/Rest.js";
+import { ExecuteRefugio, GetRefugioMetrics } from "./methods/gRCP.js";
+import { ExecuteRsi, getMetricas } from "./methods/Rsi.js";
+import { ExecuteMqtt, GetMqttMetrics } from "./methods/mqtt.js";
 
 let lista_pcs = [];
 const serviceStart = Date.now();
-const MQTT_BROKER = "mqtt://broker.hivemq.com";
-const MQTT_METRICS_REQ_TOPIC = "mqtt/metricas/get";
-const MQTT_METRICS_RES_BASE_TOPIC = "mqtt/metricas/resp";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const protoPath = join(__dirname, "..", "refugio", "refugio.proto");
-const packageDef = loadSync(protoPath, { keepCase: true });
-const refugioProto = loadPackageDefinition(packageDef).refugio;
 
 class Balanceador {
   constructor() {
     this.services = [];
     this.lastExecution = null;
     this.leerPCs();
+    this.clienteProto = new Map();
     this.getBalancerMetrics = this.getBalancerMetrics.bind(this);
+    this.executeRest = ExecuteRest.bind(this);
+    this.httpPostJson = HttpPostJson.bind(this);
+
+    this.executeRefugio = ExecuteRefugio.bind(this);
+    this.getRefugioMetrics = GetRefugioMetrics.bind(this);
+
+    this.getAhorcadoMetrics = getMetricas.bind(this);
+    this.executeRsi = ExecuteRsi.bind(this);
+
+    this.getMqttMetrics = GetMqttMetrics.bind(this);
+    this.executeMqtt = ExecuteMqtt.bind(this);
   }
 
   leerPCs() {
@@ -97,98 +95,6 @@ class Balanceador {
     });
   }
 
-  getRefugioMetrics(host, port) {
-    return new Promise((resolve, reject) => {
-      const client = new refugioProto.RefugioService(
-        `${host}:${port}`,
-        grpcCredentials.createInsecure(),
-      );
-
-      client.ObtenerMetricas({}, (err, response) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(response);
-      });
-    });
-  }
-
-  getAhorcadoMetrics(host, port) {
-    return new Promise((resolve, reject) => {
-      const socket = connectNet(port, host, () => {
-        socket.write("metricas");
-      });
-
-      socket.setTimeout(3000);
-      socket.once("data", (data) => {
-        try {
-          resolve(JSON.parse(data.toString()));
-        } catch {
-          reject(new Error("Respuesta invalida del servicio RSI"));
-        } finally {
-          socket.end();
-        }
-      });
-
-      socket.once("error", reject);
-      socket.once("timeout", () => {
-        socket.destroy();
-        reject(new Error("Timeout consultando metricas RSI"));
-      });
-    });
-  }
-
-  getMqttMetrics() {
-    return new Promise((resolve, reject) => {
-      const correlationId = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      const responseTopic = `${MQTT_METRICS_RES_BASE_TOPIC}/${correlationId}`;
-      const client = connectMqtt(MQTT_BROKER);
-
-      const failAndClose = (error) => {
-        client.end(true, () => reject(error));
-      };
-
-      const timeout = setTimeout(() => {
-        failAndClose(new Error("Timeout consultando metricas MQTT"));
-      }, 4000);
-
-      client.on("connect", () => {
-        client.subscribe(responseTopic, (subError) => {
-          if (subError) {
-            clearTimeout(timeout);
-            failAndClose(subError);
-            return;
-          }
-
-          client.publish(
-            MQTT_METRICS_REQ_TOPIC,
-            JSON.stringify({ correlationId }),
-          );
-        });
-      });
-
-      client.on("message", (topic, payload) => {
-        if (topic !== responseTopic) {
-          return;
-        }
-
-        clearTimeout(timeout);
-        try {
-          const metrics = JSON.parse(payload.toString());
-          client.end(true, () => resolve(metrics));
-        } catch {
-          failAndClose(new Error("Respuesta invalida de metricas MQTT"));
-        }
-      });
-
-      client.on("error", (err) => {
-        clearTimeout(timeout);
-        failAndClose(err);
-      });
-    });
-  }
-
   async getAllServiceMetrics() {
     const Metrics = {};
     for (const pc of lista_pcs.pcs ?? []) {
@@ -230,7 +136,6 @@ class Balanceador {
 
   normalizeServiceName(serviceName) {
     const normalized = (serviceName ?? "").toUpperCase();
-    if (normalized === "REFUGIO") return "JSON_RPC";
     return normalized;
   }
 
@@ -280,8 +185,11 @@ class Balanceador {
       return this.getMqttMetrics();
     }
 
-    if (normalizedService === "REFUGIO") {
-      return this.getRefugioMetrics(host, this.getServicePort("REFUGIO", 5051));
+    if (normalizedService === "JSON_RPC") {
+      return this.getRefugioMetrics(
+        host,
+        this.getServicePort("JSON_RPC", 5051),
+      );
     }
 
     throw new Error(`Servicio no soportado para metricas: ${serviceName}`);
@@ -332,164 +240,6 @@ class Balanceador {
     };
   }
 
-  async httpPostJson(url, body, timeoutMs = 5000) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      const text = await response.text();
-      const parsed = text ? JSON.parse(text) : {};
-
-      if (!response.ok) {
-        throw new Error(parsed?.error || `HTTP ${response.status} en ${url}`);
-      }
-
-      return parsed;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  async executeRest(host, method, params = []) {
-    const port = this.getServicePort("REST", 3001);
-    console.log(
-      "[REST]Nuevo servicio .....Port:",
-      port,
-      "Host:",
-      host,
-      "Metodo:",
-      method,
-      "Params:",
-      params,
-    );
-
-    const response = await fetch(`http://${host}:${port}/calculadora/methods`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, params }),
-    });
-
-    const data = await response.json();
-    return data;
-  }
-
-  async executeRsi(host, method, params = []) {
-    const port = this.getServicePort("RSI", 3003);
-
-    return new Promise((resolve, reject) => {
-      const socket = connectNet(port, host, () => {
-        if (method === "play") {
-          socket.write(`play:${params?.[0] ?? "A"}`);
-          return;
-        }
-
-        if (method === "metricas") {
-          socket.write("metricas");
-          return;
-        }
-
-        socket.destroy();
-        reject(new Error(`Metodo RSI no soportado: ${method}`));
-      });
-
-      socket.setTimeout(4000);
-
-      socket.once("data", (data) => {
-        try {
-          resolve(JSON.parse(data.toString()));
-        } catch {
-          reject(new Error("Respuesta invalida del servicio RSI"));
-        } finally {
-          socket.end();
-        }
-      });
-
-      socket.once("error", reject);
-      socket.once("timeout", () => {
-        socket.destroy();
-        reject(new Error("Timeout ejecutando solicitud RSI"));
-      });
-    });
-  }
-
-  async executeRefugio(host, method, params = {}) {
-    const port = this.getServicePort("REFUGIO", 5051);
-    const client = new refugioProto.RefugioService(
-      `${host}:${port}`,
-      grpcCredentials.createInsecure(),
-    );
-
-    const mapMethods = {
-      ObtenerPerros: () =>
-        new Promise((resolve, reject) => {
-          client.ObtenerPerros({}, (err, response) => {
-            if (err) return reject(err);
-            resolve(response);
-          });
-        }),
-      AdoptarPerro: () =>
-        new Promise((resolve, reject) => {
-          client.AdoptarPerro(params, (err, response) => {
-            if (err) return reject(err);
-            resolve(response);
-          });
-        }),
-      ObtenerMetricas: () =>
-        new Promise((resolve, reject) => {
-          client.ObtenerMetricas({}, (err, response) => {
-            if (err) return reject(err);
-            resolve(response);
-          });
-        }),
-    };
-
-    if (!mapMethods[method]) {
-      throw new Error(`Metodo gRPC no soportado: ${method}`);
-    }
-
-    return mapMethods[method]();
-  }
-
-  async executeMqtt(_host, method, params = {}) {
-    if (method === "metricas") {
-      return this.getMqttMetrics();
-    }
-
-    const topic = params.topic || "mqtt/lorem";
-    const payload =
-      params.payload || `Mensaje desde balanceador: ${Date.now()}`;
-
-    return new Promise((resolve, reject) => {
-      const client = connectMqtt(MQTT_BROKER);
-      const timeout = setTimeout(() => {
-        client.end(true, () => reject(new Error("Timeout publicando en MQTT")));
-      }, 4000);
-
-      client.on("connect", () => {
-        client.publish(topic, String(payload), (err) => {
-          clearTimeout(timeout);
-          if (err) {
-            client.end(true, () => reject(err));
-            return;
-          }
-          client.end(true, () => resolve({ published: true, topic, payload }));
-        });
-      });
-
-      client.on("error", (err) => {
-        clearTimeout(timeout);
-        client.end(true, () => reject(err));
-      });
-    });
-  }
-
   async execute(serviceName, method, params) {
     const normalizedService = this.normalizeServiceName(serviceName);
     const best = await this.compareMetrics(normalizedService);
@@ -516,11 +266,42 @@ class Balanceador {
     }
 
     if (normalizedService === "RSI") {
-      const result = await this.executeRsi(best.host, method, params);
-      const execution = { service: normalizedService, host: best.host, result };
+      let targetHost = best.host;
+      if (
+        method === "jugar" &&
+        params?.id &&
+        this.clienteProto.has(params.id)
+      ) {
+        targetHost = this.clienteProto.get(params.id);
+      }
+
+      const result = await this.executeRsi(
+        targetHost,
+        this.getServicePort("RSI", 3003),
+        method,
+        params,
+      );
+
+      if (method === "iniciar" && result?.id) {
+        this.clienteProto.set(result.id, targetHost);
+      }
+
+      if (
+        method === "jugar" &&
+        params?.id &&
+        (result?.ganado || result?.perdido)
+      ) {
+        this.clienteProto.delete(params.id);
+      }
+
+      const execution = {
+        service: normalizedService,
+        host: targetHost,
+        result: result,
+      };
       this.lastExecution = {
         service: normalizedService,
-        host: best.host,
+        host: targetHost,
         method,
         at: new Date().toISOString(),
       };
@@ -528,8 +309,12 @@ class Balanceador {
     }
 
     if (normalizedService === "MQTT") {
-      const result = await this.executeMqtt(best.host, method, params);
-      const execution = { service: normalizedService, host: best.host, result };
+      const result = await this.executeMqtt(method, params);
+      const execution = {
+        service: normalizedService,
+        host: best.host,
+        result: result,
+      };
       this.lastExecution = {
         service: normalizedService,
         host: best.host,
@@ -539,16 +324,20 @@ class Balanceador {
       return execution;
     }
 
-    if (normalizedService === "REFUGIO") {
+    if (normalizedService === "JSON_RPC") {
       const result = await this.executeRefugio(best.host, method, params);
-      const execution = { service: normalizedService, host: best.host, result };
+      const resultComplete = {
+        service: normalizedService,
+        host: best.host,
+        result: result,
+      };
       this.lastExecution = {
         service: normalizedService,
         host: best.host,
         method,
         at: new Date().toISOString(),
       };
-      return execution;
+      return resultComplete;
     }
 
     throw new Error(`Servicio no soportado en execute: ${serviceName}`);
@@ -606,6 +395,7 @@ class Balanceador {
         }
 
         const result = await this.execute(serviceName, method, params);
+        console.log("Resultado de la ejecucion gRPC....:", result);
         return res.status(200).json(result);
       } catch (error) {
         return res.status(500).json({
