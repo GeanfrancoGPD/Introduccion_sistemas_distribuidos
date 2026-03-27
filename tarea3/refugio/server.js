@@ -34,7 +34,7 @@ class RefugioServer {
 
   start() {
     this.server.bindAsync(
-      `127.0.0.1:${this.Port}`,
+      `0.0.0.0:${this.Port}`,
       ServerCredentials.createInsecure(),
       () => {
         console.log(

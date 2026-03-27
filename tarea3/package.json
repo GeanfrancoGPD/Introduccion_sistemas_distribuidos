@@ -5,8 +5,8 @@
   "main": "agent.js",
   "scripts": {
     "start_server": "concurrently \"node calculadora/servidores/server.js\" \"node refugio/server.js\" \"node mqtt/service_mqtt.js\" \"node ahorcado/service_rsi.js\"",
-    "start_agent": "node agent.js",
     "start_balancer": "node balancer/balancer.js",
+    "start_all": "concurrently \"npm run start_server\" \"npm run start_balancer\" \"node mygateway.js\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
